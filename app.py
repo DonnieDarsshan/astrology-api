@@ -15,7 +15,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 EPHE_PATH = os.path.join(BASE_DIR, "ephe")
 swe.set_ephe_path(EPHE_PATH)
 
-FLAGS = swe.FLG_SWIEPH | swe.FLG_SIDEREAL
+FLAGS = swe.FLG_SWIEPH | swe.FLG_SIDEREAL | swe.FLG_SPEED
 
 AYANAMSHA_MAP = {
     "Lahiri": swe.SIDM_LAHIRI,
@@ -94,12 +94,28 @@ def calculate_all_ayanamshas(jd, lat, lon):
 def calculate_sayana(jd, lat, lon):
     planets = {}
     planets_retro = {}
+    
+    # ADDED: FLG_SPEED must be included here as well
+    flags_sayana = swe.FLG_SWIEPH | swe.FLG_SPEED 
+    
     for p, code in PLANETS.items():
-        lon_p, speed = swe.calc_ut(jd, code, swe.FLG_SWIEPH)[0][0:2]
-        planets[p] = lon_p % 360
+        # FIXED: Remove [0:2] and grab the correct indexes
+        calc_result = swe.calc_ut(jd, code, flags_sayana)[0]
+        lon_p = calc_result[0] % 360
+        speed = calc_result[3] # Index 3 is the actual speed
+        
+        planets[p] = lon_p
         planets_retro[p] = speed < 0
+        
+    # ADDED: Don't forget to generate Ketu for the Sayana output as well!
+    planets["Ketu"] = (planets["Rahu"] + 180) % 360
+    planets["Ketu_true"] = (planets["Rahu_true"] + 180) % 360
+    planets_retro["Ketu"] = True
+    planets_retro["Ketu_true"] = planets_retro["Rahu_true"]
+
     houses, _ = swe.houses(jd, lat, lon, b'P')
     cusps = {str(i + 1): houses[i] % 360 for i in range(12)}
+    
     return {
         "ayanamsha_value": 0.0,
         "lagna": cusps["1"],
