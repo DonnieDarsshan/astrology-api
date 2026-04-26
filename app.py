@@ -164,6 +164,150 @@ def calculate_horary(jd, lat, lon, number):
         }
     return results
 
+
+
+# -------------------------------------------------
+# TRANSIT SEARCH LOGIC & ENDPOINT
+# -------------------------------------------------
+NAKSHATRAS = [
+    "Ashwini", "Bharani", "Krittika", "Rohini", "Mrigashira", "Ardra", "Punarvasu", "Pushya", "Ashlesha",
+    "Magha", "Purva Phalguni", "Uttara Phalguni", "Hasta", "Chitra", "Swati", "Vishakha", "Anuradha", "Jyeshtha",
+    "Moola", "Purva Ashadha", "Uttara Ashadha", "Shravana", "Dhanishta", "Shatabhisha",
+    "Purva Bhadrapada", "Uttara Bhadrapada", "Revati"
+]
+
+RASIS = [
+    "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", 
+    "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
+]
+
+def get_pada_info(degree):
+    degree = degree % 360
+    pada_index = int(degree / (360.0 / 108.0))
+    if pada_index == 108: pada_index = 107 # Edge case clamp
+    nak_index = pada_index // 4
+    pada_num = (pada_index % 4) + 1
+    rasi_index = pada_index // 9
+    return {
+        "nakshatra": NAKSHATRAS[nak_index],
+        "pada": pada_num,
+        "rasi": RASIS[rasi_index],
+        "pada_index": pada_index
+    }
+
+@app.route('/transit-search', methods=['POST'])
+def transit_search():
+    try:
+        data = request.json
+        year = int(data['year'])
+        planet_name = data['planet']
+        
+        # Lock to major planets to protect server resources
+        allowed = ["Saturn", "Jupiter", "Rahu", "Ketu", "Rahu_true", "Ketu_true"]
+        if planet_name not in allowed:
+            return jsonify({"status": "error", "message": "Planet not supported for deep transit search."}), 400
+            
+        is_ketu = "Ketu" in planet_name
+        # Resolve the base planet to query Swiss Ephemeris
+        if planet_name == "Ketu_true": swe_planet = PLANETS["Rahu_true"]
+        elif is_ketu: swe_planet = PLANETS["Rahu"]
+        else: swe_planet = PLANETS[planet_name]
+        
+        swe.set_sid_mode(AYANAMSHA_MAP["Lahiri"]) # Default to Lahiri for transits
+        
+        start_jd = swe.julday(year, 1, 1, 0.0)
+        end_jd = swe.julday(year + 1, 1, 1, 0.0)
+        
+        events = []
+        step = 1.0 # Scan day by day
+        current_jd = start_jd
+        
+        while current_jd < end_jd:
+            lon1, retro1 = get_planet_lon_and_retro(current_jd, swe_planet, FLAGS)
+            lon2, retro2 = get_planet_lon_and_retro(current_jd + step, swe_planet, FLAGS)
+            
+            if is_ketu:
+                lon1 = (lon1 + 180) % 360
+                lon2 = (lon2 + 180) % 360
+                
+            info1 = get_pada_info(lon1)
+            info2 = get_pada_info(lon2)
+            
+            # Boundary Crossed!
+            if info1['pada_index'] != info2['pada_index']:
+                jd_left = current_jd
+                jd_right = current_jd + step
+                
+                # Determine direction to find the correct boundary line
+                diff = lon2 - lon1
+                if diff > 180: diff -= 360
+                elif diff < -180: diff += 360
+                moving_forward = diff > 0
+                
+                if moving_forward:
+                    boundary_index = info2['pada_index']
+                    if info1['pada_index'] == 107 and info2['pada_index'] == 0: boundary_index = 0
+                else:
+                    boundary_index = info1['pada_index']
+                    if info1['pada_index'] == 0 and info2['pada_index'] == 107: boundary_index = 0
+                    
+                boundary_lon = boundary_index * (360.0 / 108.0)
+                
+                # Binary Search to pinpoint exact minute
+                exact_jd = jd_left
+                for _ in range(15): 
+                    mid = (jd_left + jd_right) / 2.0
+                    lon_mid, _ = get_planet_lon_and_retro(mid, swe_planet, FLAGS)
+                    if is_ketu: lon_mid = (lon_mid + 180) % 360
+                    
+                    d_mid = lon_mid - boundary_lon
+                    if d_mid > 180: d_mid -= 360
+                    elif d_mid < -180: d_mid += 360
+                    
+                    if moving_forward:
+                        if d_mid > 0: jd_right = mid
+                        else: jd_left = mid
+                    else:
+                        if d_mid < 0: jd_right = mid
+                        else: jd_left = mid
+                        
+                    exact_jd = (jd_left + jd_right) / 2.0
+                
+                # Convert exact Julian Day to UTC Date
+                y, m, d, h_float = swe.revjul(exact_jd)
+                h = int(h_float)
+                mn = int((h_float - h) * 60)
+                s = int((((h_float - h) * 60) - mn) * 60)
+                
+                # Handle edge case where seconds round up to 60
+                if s == 60: s = 59 
+                
+                dt_utc = datetime(y, m, d, h, mn, s)
+                
+                events.append({
+                    "datetime_utc": dt_utc.isoformat() + "Z",
+                    "planet": planet_name,
+                    "entered_rasi": info2['rasi'],
+                    "entered_nakshatra": info2['nakshatra'],
+                    "entered_pada": info2['pada'],
+                    "is_retrograde": not moving_forward,
+                    "degree_crossed": round(boundary_lon, 4)
+                })
+            
+            current_jd += step
+
+        return jsonify({"status": "success", "data": events})
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+
+
+
+
+
+
+
 # -------------------------------------------------
 # API ENDPOINT
 # -------------------------------------------------
