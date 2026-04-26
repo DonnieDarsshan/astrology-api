@@ -203,7 +203,7 @@ def transit_search():
         planet_name = data['planet']
         
         # Lock to major planets to protect server resources
-        allowed = ["Saturn", "Jupiter", "Rahu", "Ketu", "Rahu_true", "Ketu_true"]
+        allowed = ["Saturn", "Jupiter", "Rahu", "Ketu", "Rahu_true", "Ketu_true", "Chandra", "Surya", "Mangala", "Budha", "Venus"]
         if planet_name not in allowed:
             return jsonify({"status": "error", "message": "Planet not supported for deep transit search."}), 400
             
