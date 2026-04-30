@@ -219,7 +219,15 @@ def transit_search():
         end_jd = swe.julday(year + 1, 1, 1, 0.0)
         
         events = []
-        step = 1.0 # Scan day by day
+        
+        # Dynamic step size to prevent skipping Padas
+        # A Pada is 3.33°. The Moon moves ~13-15° per day.
+        # If step is 1.0 (1 day), it leaps over Padas entirely!
+        if planet_name == "Chandra":
+            step = 0.1 # Scan every 2.4 hours for the Moon so we catch every single Pada boundary
+        else:
+            step = 1.0 # 1 day is fine for slower planets
+            
         current_jd = start_jd
         
         while current_jd < end_jd:
