@@ -107,8 +107,14 @@ def get_nakshatra_transit_dates(target_jd, code, flags, sid_mode, p_name):
         intervals.append({"entry": entry_jd, "exit": end_jd})
         
     def format_jd(j):
-        y, m, d, _ = swe.revjul(j, swe.GREG_CAL)
-        return datetime(y, m, int(d)).strftime("%Y-%b-%02d")
+        y, m, d, h_float = swe.revjul(j, swe.GREG_CAL)
+        h = int(h_float)
+        mn = int((h_float - h) * 60)
+        s = int((((h_float - h) * 60) - mn) * 60)
+        if s >= 60: s = 59
+        
+        dt_utc = datetime(y, m, int(d), h, mn, s)
+        return dt_utc.isoformat() + "Z"  # Returns ISO string with exact time
         
     return [{"entry": format_jd(i["entry"]), "exit": format_jd(i["exit"])} for i in intervals]
 
