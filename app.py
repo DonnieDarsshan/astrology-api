@@ -49,60 +49,66 @@ def get_nakshatra_transit_dates(target_jd, code, flags, sid_mode, p_name):
         
     target_nak = get_nak(target_jd)
     
-    # 1. Expand search window to catch entire retrograde cluster
     if p_name in ["Saturn", "Jupiter", "Rahu", "Rahu_true", "Ketu", "Ketu_true"]:
-        window = 500  # Wide +/- 500 days window
+        window = 700
         step = 1.0
     elif p_name in ["Surya", "Venus", "Budha", "Mangala"]:
-        window = 100
+        window = 150
         step = 0.5
     elif p_name == "Chandra":
         window = 5
         step = 0.05
     else:
-        window = 30
+        window = 40
         step = 1.0
         
+    # Wide window ensures we start completely outside the Nakshatra, forcing a true entry detection
     start_jd = target_jd - window
     end_jd = target_jd + window
     
     intervals = []
-    t = start_jd
-    current_entry = start_jd if get_nak(start_jd) == target_nak else None
+    in_nak = False
+    entry_jd = None
     
-    # 2. Sweep across window and detect every boundary crossed
+    t = start_jd
     while t <= end_jd:
-        next_t = t + step
-        nak1 = get_nak(t)
-        nak2 = get_nak(next_t)
+        nak = get_nak(t)
         
-        if nak1 != nak2:
-            # Binary search to pinpoint exact crossing hour
-            jd_left, jd_right = t, next_t
-            for _ in range(10):
+        # Crossed IN to Target Nakshatra
+        if nak == target_nak and not in_nak:
+            jd_left, jd_right = t - step, t
+            for _ in range(12):
                 mid = (jd_left + jd_right) / 2.0
-                if get_nak(mid) == nak1:
+                if get_nak(mid) == target_nak:
+                    jd_right = mid
+                else:
+                    jd_left = mid
+            entry_jd = jd_right
+            in_nak = True
+            
+        # Crossed OUT of Target Nakshatra
+        elif nak != target_nak and in_nak:
+            jd_left, jd_right = t - step, t
+            for _ in range(12):
+                mid = (jd_left + jd_right) / 2.0
+                if get_nak(mid) == target_nak:
                     jd_left = mid
                 else:
                     jd_right = mid
-            boundary_jd = (jd_left + jd_right) / 2.0
+            exit_jd = jd_left
+            intervals.append({"entry": entry_jd, "exit": exit_jd})
+            in_nak = False
+            entry_jd = None
             
-            if nak2 == target_nak:
-                current_entry = boundary_jd
-            elif nak1 == target_nak:
-                if current_entry is not None:
-                    intervals.append({"entry": current_entry, "exit": boundary_jd})
-                    current_entry = None
         t += step
         
-    if current_entry is not None:
-        intervals.append({"entry": current_entry, "exit": end_jd})
+    if in_nak and entry_jd is not None:
+        intervals.append({"entry": entry_jd, "exit": end_jd})
         
     def format_jd(j):
         y, m, d, _ = swe.revjul(j, swe.GREG_CAL)
         return datetime(y, m, int(d)).strftime("%Y-%b-%02d")
         
-    # 3. Return ARRAY of occurrences 
     return [{"entry": format_jd(i["entry"]), "exit": format_jd(i["exit"])} for i in intervals]
 
 def horary_to_longitude(num):
