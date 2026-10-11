@@ -43,8 +43,9 @@ def get_planet_lon_and_retro(jd, code, flags):
 def get_nakshatra_transit_dates(target_jd, code, flags, sid_mode, p_name):
     swe.set_sid_mode(sid_mode)
     def get_nak(t_jd):
-        ayan = swe.get_ayanamsa(t_jd)
-        lon = (swe.calc_ut(t_jd, code, flags)[0][0] - ayan) % 360
+        # FIX: flags already includes FLG_SIDEREAL, so the output is ALREADY sidereal.
+        # Do NOT subtract ayanamsha again, otherwise dates will shift by ~24 degrees!
+        lon = swe.calc_ut(t_jd, code, flags)[0][0] % 360
         return int(lon / (360.0 / 27.0))
         
     target_nak = get_nak(target_jd)
