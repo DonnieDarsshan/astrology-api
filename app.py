@@ -40,47 +40,70 @@ def get_planet_lon_and_retro(jd, code, flags):
     is_retro = speed < 0
     return lon_today, is_retro
 
-def get_nakshatra_transit_dates(jd, code, flags, sid_mode):
+def get_nakshatra_transit_dates(target_jd, code, flags, sid_mode, p_name):
     swe.set_sid_mode(sid_mode)
-    
     def get_nak(t_jd):
         ayan = swe.get_ayanamsa(t_jd)
         lon = (swe.calc_ut(t_jd, code, flags)[0][0] - ayan) % 360
         return int(lon / (360.0 / 27.0))
         
-    start_nak = get_nak(jd)
+    target_nak = get_nak(target_jd)
     
-    # Backward search for Entry date of CURRENT stay
-    t = jd
-    while get_nak(t) == start_nak:
-        t -= 1.0
-        if jd - t > 4000: break # Safety limit
-    
-    jd_out, jd_in = t, t + 1.0
-    for _ in range(8):
-        mid = (jd_out + jd_in) / 2.0
-        if get_nak(mid) == start_nak: jd_in = mid
-        else: jd_out = mid
-    entry_jd = jd_in
-    
-    # Forward search for Exit date of CURRENT stay
-    t = jd
-    while get_nak(t) == start_nak:
-        t += 1.0
-        if t - jd > 4000: break
+    # 1. Expand search window to catch entire retrograde cluster
+    if p_name in ["Saturn", "Jupiter", "Rahu", "Rahu_true", "Ketu", "Ketu_true"]:
+        window = 500  # Wide +/- 500 days window
+        step = 1.0
+    elif p_name in ["Surya", "Venus", "Budha", "Mangala"]:
+        window = 100
+        step = 0.5
+    elif p_name == "Chandra":
+        window = 5
+        step = 0.05
+    else:
+        window = 30
+        step = 1.0
         
-    jd_out, jd_in = t, t - 1.0
-    for _ in range(8):
-        mid = (jd_out + jd_in) / 2.0
-        if get_nak(mid) == start_nak: jd_in = mid
-        else: jd_out = mid
-    exit_jd = jd_out
+    start_jd = target_jd - window
+    end_jd = target_jd + window
     
+    intervals = []
+    t = start_jd
+    current_entry = start_jd if get_nak(start_jd) == target_nak else None
+    
+    # 2. Sweep across window and detect every boundary crossed
+    while t <= end_jd:
+        next_t = t + step
+        nak1 = get_nak(t)
+        nak2 = get_nak(next_t)
+        
+        if nak1 != nak2:
+            # Binary search to pinpoint exact crossing hour
+            jd_left, jd_right = t, next_t
+            for _ in range(10):
+                mid = (jd_left + jd_right) / 2.0
+                if get_nak(mid) == nak1:
+                    jd_left = mid
+                else:
+                    jd_right = mid
+            boundary_jd = (jd_left + jd_right) / 2.0
+            
+            if nak2 == target_nak:
+                current_entry = boundary_jd
+            elif nak1 == target_nak:
+                if current_entry is not None:
+                    intervals.append({"entry": current_entry, "exit": boundary_jd})
+                    current_entry = None
+        t += step
+        
+    if current_entry is not None:
+        intervals.append({"entry": current_entry, "exit": end_jd})
+        
     def format_jd(j):
         y, m, d, _ = swe.revjul(j, swe.GREG_CAL)
         return datetime(y, m, int(d)).strftime("%Y-%b-%02d")
         
-    return {"entry": format_jd(entry_jd), "exit": format_jd(exit_jd)}
+    # 3. Return ARRAY of occurrences 
+    return [{"entry": format_jd(i["entry"]), "exit": format_jd(i["exit"])} for i in intervals]
 
 def horary_to_longitude(num):
     num = int(num)
@@ -123,7 +146,7 @@ def calculate_all_ayanamshas(jd, lat, lon):
             
             # Fetch Nakshatra Entry/Exit dates (Calculate only for Lahiri)
             if name == "Lahiri" and p not in ["Uranus", "Neptune", "Pluto"]:
-                transit_dates[p] = get_nakshatra_transit_dates(jd, code, FLAGS, sid_mode)
+                transit_dates[p] = get_nakshatra_transit_dates(jd, code, FLAGS, sid_mode, p)
             
         planets["Ketu"] = (planets["Rahu"] + 180) % 360
         planets["Ketu_true"] = (planets["Rahu_true"] + 180) % 360
